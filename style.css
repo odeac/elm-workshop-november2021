@@ -1,0 +1,12 @@
+.error {
+  color: red;
+}
+
+.done {
+  color: gray;
+  text-decoration: line-through;
+}
+
+.not-done {
+  color: black;
+}
