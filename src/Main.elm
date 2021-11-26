@@ -6,6 +6,7 @@ import Html.Events exposing (onClick)
 import Html exposing (Html, div, h1, text)
 import Http exposing (..)
 import Json.Decode as Decode
+import Json.Encode as Encode
 
 import Bootstrap.CDN as CDN
 import Bootstrap.Grid as Grid
@@ -57,7 +58,7 @@ init _ =
     , newTodoInput = ""
     , error = Nothing
     }
-  , fetchtodos
+  , fetchTodos
   )
 
 
@@ -70,6 +71,7 @@ type Msg
   | KeyUp Keyboard.RawKey
   | Tick  Time.Posix
   | Confirmation Id Bool
+  | ServerResponseAddTodo Id (Result String ())
 
 view : Model -> Html Msg
 view model =
@@ -178,16 +180,18 @@ update msg model =
         )
 
     addNewTodo () =
-      ( { model
-        | newTodoInput = ""
-        , todos =
-            if String.isEmpty (String.trim model.newTodoInput)
-              then model.todos
-              else model.todos ++ [mkTodo model.newTodoInput model.currentTime ]
-        , error = Nothing
-        }
-      , Cmd.none
-      )
+      let todo = mkTodo model.newTodoInput model.currentTime
+      in
+        ( { model
+          | newTodoInput = ""
+          , todos =
+              if String.isEmpty (String.trim model.newTodoInput)
+                then model.todos
+                else model.todos ++ [ todo ]
+          , error = Nothing
+          }
+        , addTodo todo
+        )
   in
     case msg of
       Confirmation todoId isConfirmed ->
@@ -231,6 +235,18 @@ update msg model =
         ( { model | currentTime = time}
         , Cmd.none)
 
+      ServerResponseAddTodo id (Ok ()) ->
+        ( model
+        , Cmd.none
+        )
+      ServerResponseAddTodo id (Err errorMessage) ->
+        ( { model
+          | error = Just errorMessage
+          , todos = model.todos |> List.filter (\t -> t.id /= id)
+          }
+        , Cmd.none
+        )
+
 isTodoAlreadyAdded : List Todo -> String -> Bool
 isTodoAlreadyAdded todos description =
   todos
@@ -238,25 +254,11 @@ isTodoAlreadyAdded todos description =
   |> List.isEmpty
   |> not
 
+backendUrl = "/api/tasks"
 
-fetchtodos : Cmd Msg
-fetchtodos =
+fetchTodos : Cmd Msg
+fetchTodos =
   let
-    backendUrl = "http://localhost:9000/todos"
-
-    decodeTime : Decode.Decoder Time.Posix
-    decodeTime = Decode.int |> Decode.map Time.millisToPosix
-    decodeId = Decode.string |> Decode.map Id
-
-    todoDecoder : Decode.Decoder Todo
-    todoDecoder =
-      Decode.map4
-        Todo
-        ( Decode.field "id" decodeId)
-        ( Decode.field "description" Decode.string)
-        ( Decode.field "timeCreated" decodeTime)
-        ( Decode.field "timeDone" (Decode.maybe decodeTime))
-
     handleDecoding : Result Error (List Todo) -> Msg
     handleDecoding result = case result of
       Ok todos -> PopulateTodos todos
@@ -266,6 +268,60 @@ fetchtodos =
         { url = backendUrl
         , expect = expectJson handleDecoding (Decode.list todoDecoder)
         }
+
+
+decodeTime : Decode.Decoder Time.Posix
+decodeTime = Decode.int |> Decode.map Time.millisToPosix
+decodeId = Decode.string |> Decode.map Id
+
+todoDecoder : Decode.Decoder Todo
+todoDecoder =
+  Decode.map4
+    Todo
+    ( Decode.field "id" decodeId)
+    ( Decode.field "descr" Decode.string)
+    ( Decode.field "timeCreated" decodeTime)
+    ( Decode.field "timeDone" (Decode.maybe decodeTime))
+
+encodeTodo : Todo -> Encode.Value
+encodeTodo todo =
+  let
+    (Id idStr) = todo.id
+    timeDoneJson =
+      todo.timeDone
+      |> Maybe.map (\t -> Time.posixToMillis t |> Encode.int)
+      |> Maybe.withDefault Encode.null
+  in
+    Encode.object
+      [ ("id", Encode.string idStr)
+      , ("descr", Encode.string todo.description)
+      , ("timeCreated", Encode.int (Time.posixToMillis todo.timeCreated))
+      , ("timeDone", timeDoneJson)
+      ]
+addTodo : Todo -> Cmd Msg
+addTodo todo =
+  let
+    errorToString : Http.Error -> String
+    errorToString error =
+        case error of
+            BadUrl url -> "The URL " ++ url ++ " was invalid"
+            Timeout -> "Unable to reach the server, try again"
+            NetworkError ->  "Unable to reach the server, check your network connection"
+            BadStatus status -> "Error: " ++ (String.fromInt status)
+            BadBody errorMessage -> errorMessage
+
+    handleResponse : Result Http.Error () -> Msg
+    handleResponse response =
+      response
+      |> Result.mapError errorToString
+      |> ServerResponseAddTodo todo.id
+
+  in
+    Http.post
+      { url = backendUrl
+      , expect = expectWhatever handleResponse
+      , body = Http.jsonBody (encodeTodo todo)
+      }
 
 port askConfirmation : (String, String) -> Cmd msg
 port receiveConfirmation : ((String, Bool) -> msg) -> Sub msg
