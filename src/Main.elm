@@ -9,6 +9,7 @@ import Json.Decode as Decode
 
 import Bootstrap.CDN as CDN
 import Bootstrap.Grid as Grid
+import Bootstrap.Table as Table
 import Bootstrap.Grid.Row as Row
 import Bootstrap.Button as Button
 import Bootstrap.Form.Input as Input
@@ -17,17 +18,34 @@ import Keyboard
 import Time
 import Time.Format
 import Maybe.Extra as Maybe
+import SHA
+import Binary
 
-type alias Task =
-  { descr : String
+type Id = Id String
+type alias Todo =
+  { id : Id
+  , description : String
   , timeCreated : Time.Posix
   , timeDone : Maybe Time.Posix
   }
 
+mkTodo : String -> Time.Posix -> Todo
+mkTodo description timeCreated =
+  { id =
+      (description ++ (String.fromInt (Time.posixToMillis timeCreated)))
+      |> Binary.fromStringAsUtf8
+      |> SHA.sha512
+      |> Binary.toHex
+      |> Id
+  , description = description
+  , timeCreated = timeCreated
+  , timeDone = Nothing
+  }
+
 type alias Model =
   { currentTime : Time.Posix
-  , tasks : List Task
-  , newTaskInput : String
+  , todos : List Todo
+  , newTodoInput : String
   , error : Maybe String
   }
 
@@ -35,46 +53,53 @@ type alias Model =
 init : () -> (Model, Cmd Msg)
 init _ =
   ( { currentTime = Time.millisToPosix 0
-    , tasks = []
-    , newTaskInput = ""
+    , todos = []
+    , newTodoInput = ""
     , error = Nothing
     }
-  , fetchTasks
+  , fetchtodos
   )
 
 
 type Msg
-  = TaskClicked String
-  | NewTaskInputChanged String
-  | AddNewTask
-  | PopulateTasks (List Task)
+  = TodoItemClicked Id String
+  | NewTodoInputChanged String
+  | AddNewTodo
+  | PopulateTodos (List Todo)
   | ErrorMessage String
   | KeyUp Keyboard.RawKey
   | Tick  Time.Posix
-  | Confirmation (String, Bool)
+  | Confirmation Id Bool
 
 view : Model -> Html Msg
 view model =
   let
+    timeZone = Time.customZone 120 []
+    timeFormat t =
+      Time.posixToMillis t
+      |> Time.Format.format timeZone "Day Month Year at Hour:Minute:Second"
+
     isAddDisabled =
-      isTaskAlreadyAdded model.tasks model.newTaskInput
-      || String.isEmpty model.newTaskInput
+      isTodoAlreadyAdded model.todos model.newTodoInput
+      || String.isEmpty model.newTodoInput
 
 
-    newTaskArea : Html Msg
-    newTaskArea =
+    newTodoArea : Html Msg
+    newTodoArea =
       Grid.container
         []
         [ Grid.row []
             [ Grid.col []
                 [ Input.text
-                    [ Input.value model.newTaskInput
-                    , Input.onInput NewTaskInputChanged
+                    [ Input.value model.newTodoInput
+                    , Input.onInput NewTodoInputChanged
                     ]
                 ]
             , Grid.col []
+                [ text ("Now: " ++ timeFormat model.currentTime) ]
+            , Grid.col []
                 [ Button.button
-                    [ Button.onClick AddNewTask
+                    [ Button.onClick AddNewTodo
                     , Button.disabled isAddDisabled
                     , Button.success
                     ]
@@ -82,41 +107,36 @@ view model =
                 ]
             ]
         ]
-    taskListItem : Task -> Html Msg
-    taskListItem task =
+    todoListItem : Todo -> Table.Row Msg
+    todoListItem todo =
       let
         itemClass =
-          task.timeDone
+          todo.timeDone
           |> Maybe.map (always "done")
           |> Maybe.withDefault "not-done"
 
-        attributes =
-          [ onClick (TaskClicked task.descr)
-          , class itemClass
-          ]
-
-        timeFormat t =
-          Time.posixToMillis t
-          |> Time.Format.format Time.utc "Weekday, Day Month Year at Hour:Minute:Second"
-
       in
-        Grid.row
-          [ Row.attrs [onClick (TaskClicked task.descr), class itemClass]]
-          [ Grid.col [] [text task.descr]
-          , Grid.col [] [text (timeFormat task.timeCreated)]
-          , Grid.col [] [text (task.timeDone |> Maybe.map timeFormat |> Maybe.withDefault "in-progress")]
+        Table.tr
+          [ Table.rowAttr (onClick (TodoItemClicked todo.id todo.description))
+          , Table.rowAttr (class itemClass)
+          ]
+          [ Table.td [] [text todo.description]
+          , Table.td [] [text (timeFormat todo.timeCreated)]
+          , Table.td [] [text (todo.timeDone |> Maybe.map timeFormat |> Maybe.withDefault "in-progress")]
           ]
 
-    header =
-     [ Grid.row []
-        [ Grid.col [] [text "Description"]
-        , Grid.col [] [text "Created"]
-        , Grid.col [] [text "Done"]
-        ]
-      ]
-
-    taskList : List Task -> Html Msg
-    taskList tasks = Grid.container [] (header ++ (List.map taskListItem tasks))
+    todoList : List Todo -> Html Msg
+    todoList todos =
+      Table.table
+      { options = [ Table.striped, Table.hover ]
+      , thead =  Table.simpleThead
+          [ Table.th [] [ text "Description" ]
+          , Table.th [] [ text "Created"]
+          , Table.th [] [ text "Done" ]
+          ]
+      , tbody =
+          Table.tbody [] (model.todos |> List.map todoListItem)
+      }
 
     errorInfo : Html Msg
     errorInfo =
@@ -131,8 +151,8 @@ view model =
           [
             div []
             [ h1 [] [text "TODO List"]
-            , taskList model.tasks
-            , newTaskArea
+            , todoList model.todos
+            , newTodoArea
             , errorInfo
             ]
           ]
@@ -142,46 +162,47 @@ view model =
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
   let
-    toggleDone : String -> List Task -> List Task
-    toggleDone desc tasks =
-      tasks
+    toggleDone : Id -> List Todo -> List Todo
+    toggleDone id todos =
+      todos
       |> List.map ( \t ->
-          if t.descr == desc
+          if t.id == id
             then
               { t
-              | timeDone =  case t.timeDone of
-                Just _ -> Nothing
-                Nothing -> Just model.currentTime
+              | timeDone =
+                  case t.timeDone of
+                    Just _ -> Nothing
+                    Nothing -> Just model.currentTime
               }
             else t
         )
 
-    addNewTask () =
+    addNewTodo () =
       ( { model
-        | newTaskInput = ""
-        , tasks =
-            if String.isEmpty (String.trim model.newTaskInput)
-              then model.tasks
-              else model.tasks ++ [{descr = model.newTaskInput, timeCreated = model.currentTime, timeDone = Nothing} ]
+        | newTodoInput = ""
+        , todos =
+            if String.isEmpty (String.trim model.newTodoInput)
+              then model.todos
+              else model.todos ++ [mkTodo model.newTodoInput model.currentTime ]
         , error = Nothing
         }
       , Cmd.none
       )
   in
     case msg of
-      Confirmation (taskDescr, isConfirmed) ->
+      Confirmation todoId isConfirmed ->
         ( if isConfirmed
-            then { model | tasks = toggleDone taskDescr model.tasks, error = Nothing}
+            then { model | todos = toggleDone todoId model.todos, error = Nothing}
             else model
         , Cmd.none
         )
 
-      TaskClicked taskDesc ->
+      TodoItemClicked (Id todoIdAsStr) description ->
         ( model
-        , askConfirmation taskDesc)
+        , askConfirmation (todoIdAsStr, description))
 
-      NewTaskInputChanged chg ->
-        ( { model | newTaskInput = chg, error = Nothing}
+      NewTodoInputChanged chg ->
+        ( { model | newTodoInput = chg, error = Nothing}
         , Cmd.none
         )
       KeyUp key ->
@@ -189,16 +210,16 @@ update msg model =
           isEnter = Keyboard.anyKeyUpper key
             |> Maybe.map (\k -> k == Keyboard.Enter)
             |> Maybe.withDefault False
-          isNewTask = model.tasks |> List.filter (\t -> t.descr == model.newTaskInput) |> List.isEmpty
+          todoExists = (not (isTodoAlreadyAdded model.todos model.newTodoInput))
         in
-          if isEnter && isNewTask
-            then addNewTask ()
+          if isEnter && todoExists
+            then addNewTodo ()
             else (model, Cmd.none)
 
-      AddNewTask -> addNewTask ()
+      AddNewTodo -> addNewTodo ()
 
-      PopulateTasks tasks ->
-        ( { model | tasks = tasks, error = Nothing }
+      PopulateTodos todos ->
+        ( { model | todos = todos, error = Nothing }
         , Cmd.none
         )
 
@@ -210,41 +231,43 @@ update msg model =
         ( { model | currentTime = time}
         , Cmd.none)
 
-isTaskAlreadyAdded : List Task -> String -> Bool
-isTaskAlreadyAdded tasks description =
-  tasks
-  |> List.filter (\t -> t.descr == description)
+isTodoAlreadyAdded : List Todo -> String -> Bool
+isTodoAlreadyAdded todos description =
+  todos
+  |> List.filter (\t -> t.description == description)
   |> List.isEmpty
   |> not
 
 
-fetchTasks : Cmd Msg
-fetchTasks =
+fetchtodos : Cmd Msg
+fetchtodos =
   let
-    backendUrl = "http://localhost:9000/tasks"
+    backendUrl = "http://localhost:9000/todos"
 
     decodeTime : Decode.Decoder Time.Posix
     decodeTime = Decode.int |> Decode.map Time.millisToPosix
+    decodeId = Decode.string |> Decode.map Id
 
-    taskDecoder : Decode.Decoder Task
-    taskDecoder =
-      Decode.map3
-        Task
+    todoDecoder : Decode.Decoder Todo
+    todoDecoder =
+      Decode.map4
+        Todo
+        ( Decode.field "id" decodeId)
         ( Decode.field "description" Decode.string)
         ( Decode.field "timeCreated" decodeTime)
         ( Decode.field "timeDone" (Decode.maybe decodeTime))
 
-    handleDecoding : Result Error (List Task) -> Msg
+    handleDecoding : Result Error (List Todo) -> Msg
     handleDecoding result = case result of
-      Ok tasks -> PopulateTasks tasks
-      Err _ -> ErrorMessage "Failed to get tasks"
+      Ok todos -> PopulateTodos todos
+      Err _ -> ErrorMessage "Failed to get todos"
   in
     Http.get
         { url = backendUrl
-        , expect = expectJson handleDecoding (Decode.list taskDecoder)
+        , expect = expectJson handleDecoding (Decode.list todoDecoder)
         }
 
-port askConfirmation : String -> Cmd msg
+port askConfirmation : (String, String) -> Cmd msg
 port receiveConfirmation : ((String, Bool) -> msg) -> Sub msg
 
 subscriptions : Model -> Sub Msg
@@ -252,7 +275,7 @@ subscriptions model =
   Sub.batch
     [ Time.every 1000 Tick
     , Keyboard.ups KeyUp
-    , receiveConfirmation Confirmation
+    , receiveConfirmation (\(id, confirmation) -> Confirmation (Id id) confirmation)
     ]
 
 main : Program () Model Msg

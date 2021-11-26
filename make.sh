@@ -1,4 +1,4 @@
-args="--output elm-app.js src/Main.elm"
+args="--output elm-app.js --debug src/Main.elm"
 
 case $1 in
   "live") elm-live -- $args ;;

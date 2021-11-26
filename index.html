@@ -21,9 +21,11 @@
 		node: document.getElementById("elm-node")
 	});
 
-	app.ports.askConfirmation.subscribe(function(taskName) {
-    var result = askConfirmation(taskName);
-		app.ports.receiveConfirmation.send([taskName, result])
+	app.ports.askConfirmation.subscribe(function(taskData) {
+		var taskId = taskData[0]
+		var taskDescription = taskData[1]
+    var result = askConfirmation(taskDescription);
+		app.ports.receiveConfirmation.send([taskId, result])
 });
 
 </script>

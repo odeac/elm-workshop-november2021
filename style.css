@@ -3,10 +3,10 @@
 }
 
 .done {
-  color: gray;
+  color: green;
   text-decoration: line-through;
 }
 
 .not-done {
-  color: black;
+  color: orange;
 }
