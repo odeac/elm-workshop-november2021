@@ -11,9 +11,21 @@
 
 <div id="elm-node"></div>
 <script>
-	Elm.Main.init({
+	function askConfirmation(taskDescription) {
+  return window.confirm("Please confirm the completion of '" + taskDescription + "'")
+}
+</script>
+
+<script>
+	var app = Elm.Main.init({
 		node: document.getElementById("elm-node")
 	});
+
+	app.ports.askConfirmation.subscribe(function(taskName) {
+    var result = askConfirmation(taskName);
+		app.ports.receiveConfirmation.send([taskName, result])
+});
+
 </script>
 </body>
 </html>

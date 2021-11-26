@@ -1,4 +1,4 @@
-module Main exposing (main)
+port module Main exposing (main)
 
 import Browser exposing (element)
 import Html.Attributes exposing (style, class)
@@ -51,6 +51,7 @@ type Msg
   | ErrorMessage String
   | KeyUp Keyboard.RawKey
   | Tick  Time.Posix
+  | Confirmation (String, Bool)
 
 view : Model -> Html Msg
 view model =
@@ -168,10 +169,16 @@ update msg model =
       )
   in
     case msg of
-      TaskClicked desc ->
-        ( { model | tasks = toggleDone desc model.tasks, error = Nothing}
+      Confirmation (taskDescr, isConfirmed) ->
+        ( if isConfirmed
+            then { model | tasks = toggleDone taskDescr model.tasks, error = Nothing}
+            else model
         , Cmd.none
         )
+
+      TaskClicked taskDesc ->
+        ( model
+        , askConfirmation taskDesc)
 
       NewTaskInputChanged chg ->
         ( { model | newTaskInput = chg, error = Nothing}
@@ -237,11 +244,15 @@ fetchTasks =
         , expect = expectJson handleDecoding (Decode.list taskDecoder)
         }
 
+port askConfirmation : String -> Cmd msg
+port receiveConfirmation : ((String, Bool) -> msg) -> Sub msg
+
 subscriptions : Model -> Sub Msg
 subscriptions model =
   Sub.batch
     [ Time.every 1000 Tick
     , Keyboard.ups KeyUp
+    , receiveConfirmation Confirmation
     ]
 
 main : Program () Model Msg
