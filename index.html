@@ -3,31 +3,30 @@
 <head>
   <meta charset="UTF-8">
   <title>Main</title>
-	<link rel="stylesheet" href="style.css"/>
 	<script type="text/javascript" src="elm-app.js"></script>
 </head>
 
 <body>
+  <div id="elm-node"></div>
 
-<div id="elm-node"></div>
-<script>
-	function askConfirmation(taskDescription) {
-  return window.confirm("Please confirm the completion of '" + taskDescription + "'")
-}
-</script>
+  <script>
+    function askConfirmation(taskDescription) {
+      return window.confirm("Please confirm the completion of '" + taskDescription + "'")
+    }
+  </script>
 
-<script>
-	var app = Elm.Main.init({
-		node: document.getElementById("elm-node")
-	});
+  <script>
+    var app = Elm.Main.init({
+      node: document.getElementById("elm-node")
+    });
 
-	app.ports.askConfirmation.subscribe(function(taskData) {
-		var taskId = taskData[0]
-		var taskDescription = taskData[1]
-    var result = askConfirmation(taskDescription);
-		app.ports.receiveConfirmation.send([taskId, result])
-});
+    app.ports.askConfirmationPort.subscribe(function(todoData) {
+      var todoId = todoData[0]
+      var todoDescription = todoData[1]
+      var result = askConfirmation(todoDescription);
+      app.ports.receiveConfirmationPort.send([todoId, result])
+  });
 
-</script>
+  </script>
 </body>
 </html>
